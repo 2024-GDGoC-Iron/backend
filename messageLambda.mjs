@@ -2,48 +2,44 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from "@aws-sdk/client-apigatewaymanagementapi";
 
+const {
+    BUCKET_NAME,
+    BEDROCK_MODEL_ID
+} = process.env;
+
+// 필수 환경변수 체크
+if (!BUCKET_NAME || !BEDROCK_MODEL_ID) {
+    throw new Error('Required environment variables are missing');
+}
+
 const s3 = new S3Client({ region: "ap-northeast-1" });
 const bedrock = new BedrockRuntimeClient({ region: "us-west-2" });
 
-const BUCKET_NAME = "inpick-chat-bucket";
+const SYSTEM_PROMPT = `당신은 효율적이고 친근한 대학 진로상담 상담가 인픽입니다. 
+학생들의 핵심 정보를 빠르게 파악하여 적절한 교수님과 매칭하는 것이 목적입니다.
 
-const SYSTEM_PROMPT = `당신은 학생들의 진로 상담을 통해 교수님께 전달할 분석 데이터를 수집하는 상담가입니다. 
-다음 단계에 따라 대화를 진행하세요. 각 단계에서 확인되지 않은 정보는 수집하기 위해 재질문하세요:
+다음 정보를 자연스러운 대화로 수집하세요:
 
-1단계 - 학업 현황 파악
-- 현재 학년/전공
-- 학점 및 주요 과목 이수 현황
-- 관심있는 세부 전공 분야
+1. 기본 정보 (필수)
+- 학년/전공
+- 현재 평점
+- 관심 분야와 이유
 
-2단계 - 진로 희망 사항
-- 목표로 하는 진로 분야
-- 대학원 진학 vs 취업 선호도
-- 관심있는 기업/연구실
+2. 진로 방향 (필수)
+- 희망 진로 (취업/대학원/창업)
+- 목표 직무/연구 분야
+- 준비 현황 (프로젝트/자격증/경험)
 
-3단계 - 준비 상황
-- 보유한 기술/자격증
-- 프로젝트 경험
-- 어학 능력
+3. 상담 목적 (필수)
+- 교수님께 조언받고 싶은 구체적인 내용
+- 현재 겪고 있는 어려움이나 고민
 
-4단계 - 고민 사항
-- 현재 겪는 어려움
-- 진로 선택시 우선순위
-- 조언이 필요한 부분
-
-응답 요구사항:
-1. 한 번에 하나의 정보만 물어보세요
-2. 이미 파악한 정보는 다시 묻지 마세요
-3. 답변에 공감하고 구체적으로 조언해주세요
-4. 각 단계가 완료되면 다음 단계로 자연스럽게 넘어가세요
-
-물어볼게 없다고 할 경우:
-1. 지금까지의 상담 내용을 다음 형식으로 깔끔하게 요약하세요:
-   - 기본 정보 (학년/전공/학점)
-   - 희망 진로 (목표/관심분야)
-   - 보유 역량 (기술/자격증/경험)
-   - 고민 사항
-   - 종합 의견
-2. 요약 후 "상담이 도움이 되셨길 바랍니다. 추후 교수님과의 상담에 이 내용이 활용될 예정입니다."로 마무리하세요`;
+대화 지침:
+1. 한 번에 하나의 질문만 하세요
+2. 불필요한 세부사항은 묻지 마세요
+3. 핵심 정보가 파악되면 바로 다음으로 넘어가세요
+4. 공감하고 격려하는 톤을 유지하세요
+5. 사용자가 읽기 편하게 줄바꿈을 잘 활용하세요`;
 
 async function getChatHistory(sessionId) {
     try {
@@ -80,7 +76,7 @@ async function updateChatHistory(sessionId, chatData) {
 async function chatWithClaude(message, chatHistory) {
     try {
         const input = {
-            modelId: "us.anthropic.claude-3-sonnet-20240229-v1:0",
+            modelId: BEDROCK_MODEL_ID,
             contentType: "application/json",
             accept: "application/json",
             body: JSON.stringify({
@@ -120,12 +116,10 @@ export const handler = async (event) => {
         const body = JSON.parse(event.body);
         console.log('Parsed body:', body);
         
-        // message 객체 검증 추가
         if (!body || typeof body !== 'object') {
             throw new Error('Invalid message format');
         }
 
-        // message 객체 안의 데이터 추출
         const sessionId = body.sessionId || body.message?.sessionId;
         const userId = body.userId || body.message?.userId;
         const message = body.message?.message || body.content || body.text;
@@ -143,30 +137,24 @@ export const handler = async (event) => {
             throw new Error('Missing required fields');
         }
 
-        // 1. 채팅 이력 가져오기
         const chatHistory = await getChatHistory(sessionId);
 
-        // 2. 사용자 메시지 추가
         chatHistory.messages.push({
             type: 'user',
             content: message,
             timestamp: Date.now()
         });
        
-        // 3. AI 응답 생성
         const aiResponse = await chatWithClaude(message, chatHistory);
 
-        // 4. AI 응답 추가
         chatHistory.messages.push({
             type: 'ai',
             content: aiResponse,
             timestamp: Date.now()
         });
 
-        // 5. 채팅 이력 저장
         await updateChatHistory(sessionId, chatHistory);
         
-        // 6. WebSocket 응답 전송
         const wsEndpoint = `https://${domainName}/${stage}`;
         const callbackAPI = new ApiGatewayManagementApiClient({
             endpoint: wsEndpoint,

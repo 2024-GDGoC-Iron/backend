@@ -1,6 +1,15 @@
 import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
 
+const {
+    CONNECTION_TABLE_NAME
+} = process.env;
+
+// 필수 환경변수 체크
+if (!CONNECTION_TABLE_NAME) {
+    throw new Error('Required environment variables are missing');
+}
+
 const dynamodb = new DynamoDBClient({ region: "ap-northeast-1" });
 
 export const handler = async (event) => {
@@ -9,7 +18,7 @@ export const handler = async (event) => {
     
     try {
         const params = {
-            TableName: "ConnectionTable",
+            TableName: CONNECTION_TABLE_NAME,
             Item: marshall({
                 connectionId: connectionId,
                 timestamp: timestamp,

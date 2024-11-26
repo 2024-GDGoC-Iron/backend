@@ -1,7 +1,0 @@
-# node_modules 폴더
-node_modules/
-
-# 환경 변수 파일
-.env
-
-index.html
